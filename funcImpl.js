@@ -24,7 +24,7 @@ const IDCS_MAX_COUNT = 1000;
  * 
  * objStoreBucketURL - full URL for the object store bucket inc. region, bucket, etc
  * ociRegion - region code, e.g. ap-sydney-1
- * idcsBaseUrl - idcs idenfier e.g. idcs-<host>.identity.oraclecloud.com
+ * idcsBaseUrl - idcs identifier e.g. idcs-<host>.identity.oraclecloud.com
  * idcsCertSecretId - OCID of the secret which stores IDCS signing keys
  * idcsCertAlias - Alias assigned to the public key uploaded in IDCS
  * idcsClientId - Client Identifier for an IDCS client with Audit privileges
@@ -59,7 +59,7 @@ var exportIDCSEvents = function (input, context) {
       if (context.httpGateway) {
         context.httpGateway.statusCode = 500;
       }
-      return resolve({ "error": "Function hasn't been configured correctly yet!" });
+      return reject({ "error": "Function hasn't been configured correctly yet!" });
     }
 
     //Initially we need to establish our identity for the subsequent OCI API calls

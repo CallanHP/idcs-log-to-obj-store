@@ -5,10 +5,7 @@ const fetch = require('node-fetch');
 
 //Helper function for performing Base64 URL encoding as required for JWTs
 function urlEncode(s) {
-  s = s.split('=')[0];
-  s = s.replace(/\+/g, '-');
-  s = s.replace(/\//g, '_');
-  return s;
+  return s.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 /*
@@ -75,3 +72,4 @@ var generateClientAssertion = function (clientId, certAlias, key, expiry) {
   //const altsign = crypto.createSign('id-rsassa-pkcs1-v1_5-with-sha3-256');
 }
 
+module.exports._generateClientAssertion = generateClientAssertion;

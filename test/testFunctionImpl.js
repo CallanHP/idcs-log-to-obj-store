@@ -149,6 +149,28 @@ describe("ObjectStorage Timestamp retreival", function () {
         done(err);
       });
     });
+    it("Should fall back on the start of yesterday if all of the objects are malformed", function (done) {
+      var fetchStub = sinon.stub(fetch, 'Promise').returns(Promise.resolve({
+        json: () => {
+          return { "objects": [
+            { "name": "2020-09-08T01:15:10.000Z-GARBLED!.json" },
+            { "name": "2020-09-08T01:30:10.000Z-GARBLED!.json" },
+            { "name": "2020-09-08T01:45:10.000Z-GARBLED!.json" }
+          ] };
+        }
+      }));
+      var signer = { signRequest: sinon.fake((request) => { return request; }) };
+      var objUrl = "https://dummy";
+      var expectedTimestamp = "2020-09-07T00:00:00.000Z";
+      impl._getLastObjectTimestamp(signer, objUrl).then(timestamp => {
+        expect(timestamp).to.equal(expectedTimestamp);
+        fetchStub.restore();
+        done();
+      }).catch(err => {
+        fetchStub.restore();
+        done(err);
+      });
+    });
   })
 });
 
