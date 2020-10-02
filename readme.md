@@ -17,7 +17,10 @@ Required configuration:
 * Policies on the Dyanmic Group for read access to the Secret, list objects in bucket, and create object in bucket
 * Some sort of scheduler (I used health checks and API Gateway)
 
-Todo:
+For a more detailed write up, see the accompanying post on [Red Thunder](https://redthunder.blog/2020/10/02/simple-secure-log-retention-using-oci-services/)
 
-* Improved test coverage
-* Proper writeup... (eventually will go on redthunder.blog)
+Navigating this repo:
+
+Structure is a little monolithic... Main implementation is in funcImpl (which allows for unit-testing, as opposed to doing the implementation in func.js, which would load the FDK wrapper). Reusable OCI capabilities are in /util, which provides request signing, a config loader, token management, etc. For some reason I put the secrets behaviour in its own module, but not the object store capability - eh, future refactoring.
+
+Perpetual TODO: Better test coverage...
