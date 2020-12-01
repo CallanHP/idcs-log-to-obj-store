@@ -188,7 +188,7 @@ var getLastTimestampForDay = function (signer, objUrl, date) {
     //minimise the number of objects we get back.
     logger.debug("In getLastTimestamp for day: " + date.toISOString());
     var request = {
-      url: objUrl + "/o?prefix=" + date.toISOString().split("T")[0],
+      url: objUrl + "/o?prefix=idcs_audit/" + date.toISOString().split("T")[0],
       method: "GET",
       headers: {}
     }
@@ -225,7 +225,7 @@ var writeEvents = function (signer, objUrl, startTimestamp, endTimestamp, events
   return new Promise((resolve, reject) => {
     //Writing simple text to object store is actually really easy...
     var request = {
-      url: objUrl + "/o/" +startTimestamp + "-" + endTimestamp + "-idcs-audit-events.json",
+      url: objUrl + "/o/idcs_audit/" +startTimestamp + "-" + endTimestamp + "-idcs-audit-events.json",
       method: "PUT",
       headers: {
         "content-type": "text/plain"
