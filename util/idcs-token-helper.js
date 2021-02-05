@@ -9,11 +9,11 @@ function urlEncode(s) {
 }
 
 /*
- * Generate a client assertion and get an IDCS access token 
+ * Generate get an IDCS access token using a client assertion - obtained
+ * from one of the other methods in the module.
  */
-module.exports.getAccessToken = function (idcsUrl, clientId, certAlias, key) {
+module.exports.getAccessToken = function (idcsUrl, assertion) {
   return new Promise((resolve, reject) => {
-    var clientAssertion = generateClientAssertion(clientId, certAlias, key);
     //Yeah, we are sending un-validated parameters here... this is bad. Don't do this.
     //On the other hand, in this use case, in order to manipulate these parameters, the
     //user has to have admin access to your Functions environment, so...
@@ -25,7 +25,7 @@ module.exports.getAccessToken = function (idcsUrl, clientId, certAlias, key) {
       },
       body: "grant_type=client_credentials&scope=urn:opc:idm:__myscopes__"
         + "&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-        + "&clientId=" + clientId + "&client_assertion=" + clientAssertion
+        + "&clientId=" + clientId + "&client_assertion=" + assertion
     }
     fetch(request.url, request).then(res => {
       return res.json();
@@ -44,7 +44,7 @@ module.exports.getAccessToken = function (idcsUrl, clientId, certAlias, key) {
  * Generate a signed JWT in a valid format for IDCS to be used as a client 
  * assertion.
  */
-var generateClientAssertion = function (clientId, certAlias, key, expiry) {
+module.exports.generateClientAssertion = function (clientId, certAlias, key, expiry) {
   if (!expiry) {
     expiry = 30; //30 seconds
   }
@@ -72,4 +72,36 @@ var generateClientAssertion = function (clientId, certAlias, key, expiry) {
   //const altsign = crypto.createSign('id-rsassa-pkcs1-v1_5-with-sha3-256');
 }
 
-module.exports._generateClientAssertion = generateClientAssertion;
+/*
+ * Generate an unsigned JWT in a valid format for IDCS to be used as a client 
+ * assertion.
+ */
+module.exports.generateUnsignedClientAssertion = function (clientId, certAlias, alg, expiry) {
+  if(typeof alg == 'number'){
+    expiry = alg;
+    alg = null;
+  }
+  if (!expiry) {
+    expiry = 30; //30 seconds
+  }
+  if (!alg) {
+    alg = "RS256";
+  }
+  var tokenIssued = Math.floor(Date.now() / 1000);
+  var tokenExpiry = tokenIssued + expiry;
+  var header = {
+    "alg": alg,
+    "typ": "JWT",
+    "kid": certAlias
+  };
+  var payload = {
+    "sub": clientId,
+    "iss": clientId,
+    "aud": ["https://identity.oraclecloud.com/"],
+    "iat": tokenIssued,
+    "exp": tokenExpiry
+  };
+  var tokenstr = urlEncode(Buffer.from(JSON.stringify(header)).toString('base64')) + "."
+    + urlEncode(Buffer.from(JSON.stringify(payload)).toString('base64'));
+  return tokenstr;
+}

@@ -2,3 +2,5 @@ node_modules/
 dist/
 
 set-local-vars.sh
+
+.npmrc

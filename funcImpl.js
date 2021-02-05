@@ -11,6 +11,7 @@ var logger = log4js.getLogger();
 logger.level = process.env["LOG_LEVEL"] || "error";
 
 const IDCS_MAX_COUNT = 1000;
+const IDCS_ASSERTION_SIGNING_ALG = "SHA_256_RSA_PKCS1_V1_5";
 
 /* Function implementation designed to handle pulling logs out of IDCS in a '
  * controlled manner and write them to an object storage bucket for archiving.
@@ -38,6 +39,8 @@ var exportIDCSEvents = function (input, context) {
     const region = context.config.ociRegion || process.env["OCI_REGION"];
     const idcsUrl = context.config.idcsBaseUrl || process.env["IDCS_URL"];
     const idcsCertSecretId = context.config.idcsCertSecretId || process.env["IDCS_SECRET_ID"];
+    const idcsCertSigningKeyId = context.config.idcsSigningKeyId || process.env["IDCS_SIGNING_KEY_ID"];
+    const vaultSubdomain = context.config.vaultSubdomain || process.env["VAULT_SUBDOMAIN"];
     const idcsCertAlias = context.config.idcsCertAlias || process.env["IDCS_CERT_ALIAS"];
     const idcsClientId = context.config.idcsClientId || process.env["IDCS_CLIENT_ID"];
     const maxEvents = parseInt(context.config.maxEvents) || parseInt(process.env["MAX_EVENTS"]) || 2500
@@ -48,12 +51,18 @@ var exportIDCSEvents = function (input, context) {
       logger.level = context.config.logLevel;
     }
 
-    if (!objUrl || !region || !idcsUrl || !idcsCertSecretId || !idcsCertAlias || isNaN(maxEvents)) {
+    //Config validation
+    if (!objUrl || !region || !idcsUrl || 
+      !(idcsCertSecretId || idcsCertSigningKeyId) || 
+      (idcsCertSigningKeyId && !vaultSubdomain) ||
+      !idcsCertAlias || isNaN(maxEvents)) {
       logger.error("Function lacking critical config information.");
       logger.error("objUrl:" + objUrl);
       logger.error("region:" + region);
       logger.error("idcsUrl:" + idcsUrl);
       logger.error("idcsCertSecretId:" + idcsCertSecretId);
+      logger.error("idcsCertSigningKeyId:" + idcsCertSigningKeyId);
+      logger.error("vaultSubdomain:" + vaultSubdomain);
       logger.error("idcsCertAlias:" + idcsCertAlias);
       logger.error("maxEvents:" + maxEvents);
       if (context.httpGateway) {
@@ -131,7 +140,7 @@ var exportIDCSEvents = function (input, context) {
       logger.debug("Events written (or not, if 0), returning!");
       return resolve({
         "done": "yes!"
-      });      
+      });
     }).catch(err => {
       logger.error(err);
       if (context.httpGateway) {
@@ -139,6 +148,31 @@ var exportIDCSEvents = function (input, context) {
       }
       return resolve({ "error": "Error while invoking function." });
     })
+  });
+}
+
+/*
+ * Get a signed client assertion for IDCS. Split out to a function to handle
+ * the promise branching without it all getting too messy.
+ * If we have a SigningKeyId setup, then OCI Vault signing is used to keep
+ * private keys really secure, otherwise, we pull the private key into memory 
+ * from secrets then sign it.
+ */
+var getSignedIDCSAssertion = function (signer, region, certSecretId, certSigningKeyId, clientId, certAlias) {
+  return new Promise((resolve, reject) => {
+    //Check how we are signing the token - locally or using Vault
+    if (certSigningKeyId) {
+      logger.debug("Using vault to sign an IDCS assertion...");
+      //We are using vault - use default algorithm - RS256
+      var assertion = idcsHelper.generateUnsignedClientAssertion(idcsClientId, idcsCertAlias);
+      //Call into vault for signing
+      signIDCSAssertion(signer, region, certSigningKeyId, assertion).then(resolve).catch(reject);
+    } else {
+      logger.debug("Getting the signing key from vault...");
+      getIDCSSigningKey(signer, region, certSecretId).then(jwtKey => {
+        resolve(idcsHelper.generateClientAssertion(clientId, certAlias, jwtKey));
+      }).catch(reject);
+    }
   });
 }
 
@@ -198,7 +232,7 @@ var getLastTimestampForDay = function (signer, objUrl, date) {
     }).then(json => {
       //If there are results, then get the last one to determine our timestamp (results are sorted alphabetically)
       if (json.objects && json.objects.length != 0) {
-        while(json.objects.length > 0){
+        while (json.objects.length > 0) {
           var objName = json.objects.pop().name;
           //Since the name is <start timestamp>-<end timestamp>, we will match the latter using regex
           var objNameMatches = objName.match(/.*Z-(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z)/);
@@ -225,7 +259,7 @@ var writeEvents = function (signer, objUrl, startTimestamp, endTimestamp, events
   return new Promise((resolve, reject) => {
     //Writing simple text to object store is actually really easy...
     var request = {
-      url: objUrl + "/o/idcs_audit/" +startTimestamp + "-" + endTimestamp + "-idcs-audit-events.json",
+      url: objUrl + "/o/idcs_audit/" + startTimestamp + "-" + endTimestamp + "-idcs-audit-events.json",
       method: "PUT",
       headers: {
         "content-type": "text/plain"
@@ -255,6 +289,20 @@ var getIDCSSigningKey = function (signer, region, idcsCertSecretId) {
   });
 }
 
+var signIDCSAssertion = function (signer, region, vaultSubdomain, idcsCertSigningKeyId, assertion) {
+  return new Promise((resolve, reject) => {
+    //Need to double base64 encode the assertion, since the Signing API expects a 
+    //base64 encoded binary representation, where JWT expects the assertion to be
+    //treated as a utf8 string.
+    var messageToSign = Buffer.from(assertion, 'utf8').toString('base64')
+    secretsHelper.signMessage(signer, region, vaultSubdomain, idcsCertSigningKeyId,
+      messageToSign, IDCS_ASSERTION_SIGNING_ALG).then(signature => {
+        //Hacky inline url encoding...
+        return resolve(assertion+"."+signature.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_'))
+      }).catch(reject);
+  });
+}
+
 /*
  * Need some smarts around the Audit API, to facilitate the sorts of logging 
  * behaviour we are looking for.
@@ -272,32 +320,32 @@ var getIDCSAuditEvents = function (idcsUrl, token, startTimestamp, maxEvents) {
   logger.debug("Get events - startTimestamp: " + startTimestamp);
   //TODO: Handle maxEvents > 1000, since that is the most that IDCS returns
   return new Promise((resolve, reject) => {
-    getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents<IDCS_MAX_COUNT?maxEvents:IDCS_MAX_COUNT, 1).then((data) => {
-      if(!data.totalResults || !data.Resources){
+    getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents < IDCS_MAX_COUNT ? maxEvents : IDCS_MAX_COUNT, 1).then((data) => {
+      if (!data.totalResults || !data.Resources) {
         throw new Error("Audit Events response from IDCS malformed.");
       }
       var events = data.Resources;
-      if(maxEvents>IDCS_MAX_COUNT && data.totalResults > IDCS_MAX_COUNT){
+      if (maxEvents > IDCS_MAX_COUNT && data.totalResults > IDCS_MAX_COUNT) {
         var requests = [];
         maxEvents -= IDCS_MAX_COUNT;
         //IDCS indexes start from 1... strange
-        var offset = IDCS_MAX_COUNT+1;
-        while(offset < data.totalResults && maxEvents > 0){
-          requests.push(getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents<IDCS_MAX_COUNT?maxEvents:IDCS_MAX_COUNT, offset));
+        var offset = IDCS_MAX_COUNT + 1;
+        while (offset < data.totalResults && maxEvents > 0) {
+          requests.push(getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents < IDCS_MAX_COUNT ? maxEvents : IDCS_MAX_COUNT, offset));
           maxEvents -= IDCS_MAX_COUNT;
           offset += IDCS_MAX_COUNT;
         }
-        Promise.all(requests).then((responses)=>{
-          for(var i=0; i<responses.length; i++){
-            if(responses[i].Resources){
+        Promise.all(requests).then((responses) => {
+          for (var i = 0; i < responses.length; i++) {
+            if (responses[i].Resources) {
               events = events.concat(responses[i].Resources);
-            }else{
+            } else {
               throw new Error("Audit Events response from IDCS malformed.");
             }
           }
           resolve(events);
-        }).catch((err)=>{throw err});
-      }else{
+        }).catch((err) => { throw err });
+      } else {
         resolve(events);
       }
     }).catch(reject);
@@ -323,12 +371,12 @@ var getIDCSAuditEvents = function (idcsUrl, token, startTimestamp, maxEvents) {
   });
 }
 
-var getIDCSAuditEventsPaginated = function(idcsUrl, token, startTimestamp, maxEvents, offset){
-  return new Promise((resolve,reject)=> {
+var getIDCSAuditEventsPaginated = function (idcsUrl, token, startTimestamp, maxEvents, offset) {
+  return new Promise((resolve, reject) => {
     var request = {
       url: (idcsUrl.startsWith("http") ? idcsUrl : "https://" + idcsUrl) + "/admin/v1/AuditEvents"
-        + "?filter=timestamp+gt+%22" + startTimestamp + "%22&count=" + maxEvents + "&startIndex=" 
-        + offset +"&sortBy=timestamp&sortOrder=ascending",
+        + "?filter=timestamp+gt+%22" + startTimestamp + "%22&count=" + maxEvents + "&startIndex="
+        + offset + "&sortBy=timestamp&sortOrder=ascending",
       method: "GET",
       headers: {
         "Authorization": "Bearer " + token
@@ -337,7 +385,7 @@ var getIDCSAuditEventsPaginated = function(idcsUrl, token, startTimestamp, maxEv
     fetch(request.url, request).then(res => {
       return res.json();
     }).then(resolve).catch(reject);
-  });  
+  });
 }
 
 //Export for testing
@@ -346,6 +394,8 @@ module.exports._getLastObjectTimestamp = getLastObjectTimestamp;
 module.exports._getIDCSAuditEvents = getIDCSAuditEvents;
 module.exports._getIDCSAuditEventsPaginated = getIDCSAuditEventsPaginated;
 
+module.exports._getSignedIDCSAssertion = getSignedIDCSAssertion;
+module.exports._signIDCSAssertion = signIDCSAssertion;
 
 module.exports.handler = exportIDCSEvents;
 

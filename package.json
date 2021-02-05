@@ -1,17 +1,17 @@
 {
-	"name": "hellofn",
-	"version": "1.0.0",
-	"description": "example function",
+	"name": "idcs-log-to-obj-store",
+	"version": "1.1.0",
+	"description": "Function to periodically poll IDCS Audit then push the events to Object Storage",
 	"main": "func.js",
-	"author": "",
-	"license": "Apache-2.0",
+	"author": "callan.howell-pavia@oracle.com",
+	"license": "UPL",
 	"dependencies": {
-		"@fnproject/fdk": ">=0.0.18",
+		"@fnproject/fdk": "0.0.19",
 		"log4js": "^6.3.0",
 		"node-fetch": "^2.6.1"
 	},
 	"devDependencies": {
 		"chai": "^4.2.0",
-		"sinon": "^9.0.3"
+		"sinon": "^9.2.4"
 	}
 }

@@ -24,3 +24,38 @@ module.exports.getSecret = function(signer, region, secretId){
     })
   });
 };
+
+/*
+ * Use the RSA key in the Vaults service to sign a message.
+ * This assumes you are signing a smallish message, less than 4096 bytes
+ */
+module.exports.signMessage = function(signer, region, vaultSubdomain, keyId, message, algorithm){
+  return new Promise((resolve, reject) => {
+    //Need to base64 encode the message, since the Signing API expects a 
+    //base64 encoded binary representation, even if the message is already in 
+    //base64 as it is a JWT string...
+    var messageToSign = Buffer.from(message, 'utf8').toString('base64')
+    var signingRequest = {
+      keyId: keyId,
+      message: messageToSign, 
+      signingAlgorithm: algorithm
+    };
+    var request = {
+      url: "https://" +vaultSubdomain +".kms" + region + ".oci.oraclecloud.com/20180608/sign",
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(signingRequest)
+    }
+    request = signer.signRequest(request);
+    fetch(request.url, request).then(res => {
+      return res.json();
+    }).then(json => {
+      if (!json.signature) {
+        return reject("Error signing the message with key in Vault!")
+      }
+      return resolve(json.signature);
+    }).catch(reject)
+  });
+};
