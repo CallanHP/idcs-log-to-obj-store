@@ -44,26 +44,8 @@ module.exports.getAccessToken = function (idcsUrl, assertion) {
  * Generate a signed JWT in a valid format for IDCS to be used as a client 
  * assertion.
  */
-module.exports.generateClientAssertion = function (clientId, certAlias, key, expiry) {
-  if (!expiry) {
-    expiry = 30; //30 seconds
-  }
-  var tokenIssued = Math.floor(Date.now() / 1000);
-  var tokenExpiry = tokenIssued + expiry;
-  var header = {
-    "alg": "RS256",
-    "typ": "JWT",
-    "kid": certAlias
-  };
-  var payload = {
-    "sub": clientId,
-    "iss": clientId,
-    "aud": ["https://identity.oraclecloud.com/"],
-    "iat": tokenIssued,
-    "exp": tokenExpiry
-  };
-  var tokenstr = urlEncode(Buffer.from(JSON.stringify(header)).toString('base64')) + "."
-    + urlEncode(Buffer.from(JSON.stringify(payload)).toString('base64'));
+module.exports.generateClientAssertion = function (clientId, certAlias, key, alg, expiry) {
+  var tokenstr = generateUnsignedClientAssertion(clientId, certAlias, alg, expiry);
   const sign = crypto.createSign('RSA-SHA256');
   sign.update(tokenstr);
   sign.end();
@@ -76,7 +58,7 @@ module.exports.generateClientAssertion = function (clientId, certAlias, key, exp
  * Generate an unsigned JWT in a valid format for IDCS to be used as a client 
  * assertion.
  */
-module.exports.generateUnsignedClientAssertion = function (clientId, certAlias, alg, expiry) {
+var generateUnsignedClientAssertion = function (clientId, certAlias, alg, expiry) {
   if(typeof alg == 'number'){
     expiry = alg;
     alg = null;
@@ -105,3 +87,4 @@ module.exports.generateUnsignedClientAssertion = function (clientId, certAlias, 
     + urlEncode(Buffer.from(JSON.stringify(payload)).toString('base64'));
   return tokenstr;
 }
+module.exports.generateUnsignedClientAssertion = generateUnsignedClientAssertion;

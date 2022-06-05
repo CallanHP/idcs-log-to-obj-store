@@ -55,7 +55,7 @@ var exportIDCSEvents = function (input, context) {
     if (!objUrl || !region || !idcsUrl || 
       !(idcsCertSecretId || idcsCertSigningKeyId) || 
       (idcsCertSigningKeyId && !vaultSubdomain) ||
-      !idcsCertAlias || isNaN(maxEvents)) {
+      !idcsCertAlias || !idcsClientId || isNaN(maxEvents)) {
       logger.error("Function lacking critical config information.");
       logger.error("objUrl:" + objUrl);
       logger.error("region:" + region);
@@ -93,7 +93,7 @@ var exportIDCSEvents = function (input, context) {
       } catch (e) {
         logger.error("Error loading local config file.")
         logger.error(e);
-        return resolve({ "error": "Could not load config." });
+        return reject({ "error": "Could not load config." });
       }
       //validate.. etc...
       let keyId = config.tenancy + "/" + config.user + "/" + config.fingerprint;
@@ -115,8 +115,8 @@ var exportIDCSEvents = function (input, context) {
       }
       //Step 2. Get the audit events from IDCS
       //Get an IDCS token
-      logger.debug("Getting the signing key from vault...");
-      return getIDCSSigningKey(ociSigner, region, idcsCertSecretId).then(jwtKey => {
+      logger.debug("Obtaining Signed JWT Assertion for IDCS...");
+      return getSignedIDCSAssertion(ociSigner, region, vaultSubdomain, idcsCertSecretId, idcsCertSigningKeyId, idcsClientId, idcsCertAlias).then(jwtKey => {
         logger.debug("Obtaining IDCS token...");
         return idcsHelper.getAccessToken(idcsUrl, idcsClientId, idcsCertAlias, jwtKey);
       }).then(token => {
@@ -158,15 +158,15 @@ var exportIDCSEvents = function (input, context) {
  * private keys really secure, otherwise, we pull the private key into memory 
  * from secrets then sign it.
  */
-var getSignedIDCSAssertion = function (signer, region, certSecretId, certSigningKeyId, clientId, certAlias) {
+var getSignedIDCSAssertion = function (signer, region, vaultSubdomain, certSecretId, certSigningKeyId, clientId, certAlias) {
   return new Promise((resolve, reject) => {
     //Check how we are signing the token - locally or using Vault
     if (certSigningKeyId) {
       logger.debug("Using vault to sign an IDCS assertion...");
       //We are using vault - use default algorithm - RS256
-      var assertion = idcsHelper.generateUnsignedClientAssertion(idcsClientId, idcsCertAlias);
+      var assertion = idcsHelper.generateUnsignedClientAssertion(clientId, certAlias);
       //Call into vault for signing
-      signIDCSAssertion(signer, region, certSigningKeyId, assertion).then(resolve).catch(reject);
+      signIDCSAssertion(signer, region, vaultSubdomain, certSigningKeyId, assertion).then(resolve).catch(reject);
     } else {
       logger.debug("Getting the signing key from vault...");
       getIDCSSigningKey(signer, region, certSecretId).then(jwtKey => {
@@ -291,12 +291,8 @@ var getIDCSSigningKey = function (signer, region, idcsCertSecretId) {
 
 var signIDCSAssertion = function (signer, region, vaultSubdomain, idcsCertSigningKeyId, assertion) {
   return new Promise((resolve, reject) => {
-    //Need to double base64 encode the assertion, since the Signing API expects a 
-    //base64 encoded binary representation, where JWT expects the assertion to be
-    //treated as a utf8 string.
-    var messageToSign = Buffer.from(assertion, 'utf8').toString('base64')
     secretsHelper.signMessage(signer, region, vaultSubdomain, idcsCertSigningKeyId,
-      messageToSign, IDCS_ASSERTION_SIGNING_ALG).then(signature => {
+      assertion, IDCS_ASSERTION_SIGNING_ALG).then(signature => {
         //Hacky inline url encoding...
         return resolve(assertion+"."+signature.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_'))
       }).catch(reject);

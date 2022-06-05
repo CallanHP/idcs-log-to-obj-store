@@ -41,7 +41,7 @@ module.exports.signMessage = function(signer, region, vaultSubdomain, keyId, mes
       signingAlgorithm: algorithm
     };
     var request = {
-      url: "https://" +vaultSubdomain +".kms" + region + ".oci.oraclecloud.com/20180608/sign",
+      url: "https://" +vaultSubdomain +".kms." + region + ".oci.oraclecloud.com/20180608/sign",
       method: "POST",
       headers: {
         "content-type": "application/json"

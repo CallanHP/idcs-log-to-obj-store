@@ -1,10 +1,230 @@
 const expect = require('chai').expect;
 const sinon = require('sinon');
 const fetch = require('node-fetch');
+const log4js = require("log4js");
+
+const OciConfigLoader = require('../util/oci-config-loader');
+const idcsHelper = require('../util/idcs-token-helper');
 
 const impl = require("../funcImpl");
 
-describe("ObjectStorage Timestamp retreival", function () {
+describe("FuncImpl Config Validation", function () {
+  //turn off in-function logging...
+  before(function(){
+    log4js.getLogger().level = "off";
+  });
+  it("Should proceed when config values present (for secrets)", function(done){
+    //Stub the config loader so we always fail on that step.
+    var configStub = sinon.stub(OciConfigLoader, "loadLocalConfig").throws();
+    var expectedError = "Could not load config.";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          "idcsCertSecretId":"abc",
+          "idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      configStub.restore();
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError);
+      configStub.restore();
+      done();
+    });
+  });
+  it("Should proceed when config values present (for vault)", function(done){
+    //Stub the config loader so we always fail on that step.
+    var configStub = sinon.stub(OciConfigLoader, "loadLocalConfig").throws();
+    var expectedError = "Could not load config.";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          "idcsSigningKeyId":"abc",
+          "vaultSubdomain":"abc",
+          "idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      configStub.restore();
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError);
+      configStub.restore();
+      done();
+    });
+  });
+  it("Should fail when missing the object Storage URL", function(done){
+    var expectedError = "Function hasn't been configured correctly yet!";
+    var context = {
+      config:{
+          //"objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          "idcsCertSecretId":"abc",
+          "idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError)
+      expect(context.httpGateway.statusCode).to.equal(500);
+      done();
+    });
+  });
+  it("Should fail when missing the region", function(done){
+    var expectedError = "Function hasn't been configured correctly yet!";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          //"ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          "idcsCertSecretId":"abc",
+          "idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError)
+      expect(context.httpGateway.statusCode).to.equal(500);
+      done();
+    });
+  });
+  it("Should fail when missing the idcsUrl", function(done){
+    var expectedError = "Function hasn't been configured correctly yet!";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          //"idcsBaseUrl":"abc",
+          "idcsCertSecretId":"abc",
+          "idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError)
+      expect(context.httpGateway.statusCode).to.equal(500);
+      done();
+    });
+  });
+  it("Should fail when missing the idcs Cert Alias", function(done){
+    var expectedError = "Function hasn't been configured correctly yet!";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          "idcsCertSecretId":"abc",
+          //"idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError)
+      expect(context.httpGateway.statusCode).to.equal(500);
+      done();
+    });
+  });
+  it("Should fail when missing the idcs Client ID", function(done){
+    var expectedError = "Function hasn't been configured correctly yet!";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          "idcsCertSecretId":"abc",
+          "idcsCertAlias":"abc",
+          //"idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError)
+      expect(context.httpGateway.statusCode).to.equal(500);
+      done();
+    });
+  });
+  it("Should fail when missing the idcsCertSecretId, and Vault signing details not provided", function(done){
+    var expectedError = "Function hasn't been configured correctly yet!";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          //"idcsCertSecretId":"abc",
+          "idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError)
+      expect(context.httpGateway.statusCode).to.equal(500);
+      done();
+    });
+  });
+  it("Should fail when Vault signing ID provided, without vault subdomain", function(done){
+    var expectedError = "Function hasn't been configured correctly yet!";
+    var context = {
+      config:{
+          "objStoreBucketURL":"abc",
+          "ociRegion":"abc",
+          "idcsBaseUrl":"abc",
+          "idcsCertSigningKeyId":"abc",
+          "idcsCertAlias":"abc",
+          "idcsClientId":"abc",
+      },
+      httpGateway:{}
+    };
+    impl.handler("test", context).then(()=>{
+      expect("success").to.equal(false);
+      done();
+    }).catch(err =>{
+      expect(err.error).to.equal(expectedError)
+      expect(context.httpGateway.statusCode).to.equal(500);
+      done();
+    });
+  });
+  
+  after(function(){
+    log4js.getLogger().level = process.env["LOG_LEVEL"] || "error";
+  });
+});
+
+describe("ObjectStorage Timestamp retrieval", function () {
   describe("getLastTimestampForDay", function () {
     it("Should successfully retrieve a timestamp for the same day", function (done) {
       var fetchStub = sinon.stub(fetch, 'Promise').returns(Promise.resolve({
@@ -267,5 +487,53 @@ describe("IDCS Audit Event retreival", function () {
       });
     });
 
+  });
+});
+
+
+describe("IDCS Client Assertion Creation", function () {
+  describe("getSignedIDCSAssertion", function () {
+    //Stub the date method to set it to the sample time
+    before(function () { clock = sinon.useFakeTimers(new Date("2020-09-08T02:00:00.000Z")); })
+    after(function () { clock.restore(); })
+    it("Makes a call into Vault to sign an assertion", function (done) {
+      var fetchStub = sinon.stub(fetch, 'Promise').returns(Promise.resolve({
+        json: () => {
+          return {"signature":"abc+/="};
+        }
+      }));
+      var signer = { signRequest: sinon.fake((request) => { return request; }) };
+      var expectedJWT = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3RhbGlhcyJ9."
+      +"eyJzdWIiOiJ0ZXN0aWQiLCJpc3MiOiJ0ZXN0aWQiLCJhdWQiOlsiaHR0cHM6Ly9pZGVudGl0eS5vcmFjbGVj"
+      +"bG91ZC5jb20vIl0sImlhdCI6MTU5OTUzMDQwMCwiZXhwIjoxNTk5NTMwNDMwfQ.abc-_";
+      impl._getSignedIDCSAssertion(signer, "region", "vault-subdomain", null, "ocid123", "testid", "testalias").then(res => {
+        expect(res).to.equal(expectedJWT);
+        fetchStub.restore();
+        done();
+      }).catch((e) => {
+        fetchStub.restore();
+        done(e);
+      });
+    });
+    it("Makes a call into Secrets to obtain a key to sign an assertion", function (done) {
+      var fetchStub = sinon.stub(fetch, 'Promise').returns(Promise.resolve({
+        json: () => {
+          return {"secretBundleContent":{"content":"key"}};
+        }
+      }));
+      var signStub = sinon.stub(idcsHelper, "generateClientAssertion").returns("assertion");
+      var signer = { signRequest: sinon.fake((request) => { return request; }) };
+      var expectedJWT = "assertion";
+      impl._getSignedIDCSAssertion(signer, "region", null, "ocid123", null, "testid", "testalias").then(res => {
+        expect(res).to.equal(expectedJWT);
+        fetchStub.restore();
+        signStub.restore();
+        done();
+      }).catch((e) => {
+        fetchStub.restore();
+        signStub.restore();
+        done(e);
+      });
+    });
   });
 });

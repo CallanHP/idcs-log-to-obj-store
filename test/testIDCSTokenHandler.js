@@ -65,7 +65,7 @@ describe("IDCS token helper", function(){
     before(function () { clock = sinon.useFakeTimers(new Date("2020-09-08T02:00:00.000Z")); })
     after(function () { clock.restore(); })
     it("Generates a valid signed JWT", function(){
-      var assertion = impl._generateClientAssertion("testid", "testalias", samplePrivate, 100);
+      var assertion = impl.generateClientAssertion("testid", "testalias", samplePrivate, 100);
       var expectedAssertion = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3RhbGlhcyJ9."
       +"eyJzdWIiOiJ0ZXN0aWQiLCJpc3MiOiJ0ZXN0aWQiLCJhdWQiOlsiaHR0cHM6Ly9pZGVudGl0eS5vcmFjbGVj"
       +"bG91ZC5jb20vIl0sImlhdCI6MTU5OTUzMDQwMCwiZXhwIjoxNTk5NTMwNTAwfQ.k0tw7-dlk0lvFCRdNm2E9"
@@ -78,6 +78,32 @@ describe("IDCS token helper", function(){
       var assertionParts = assertion.split(".");
       verifier.update(assertionParts[0]+"."+assertionParts[1]);
       expect(verifier.verify(sampleCert, assertionParts[2], 'base64')).to.equal(true);
+    });
+  });
+  describe("generateUnsignedClientAssertion", function(){
+    //Stub the date method to set it to the sample time
+    before(function () { clock = sinon.useFakeTimers(new Date("2020-09-08T02:00:00.000Z")); })
+    after(function () { clock.restore(); })
+    it("Generates an unsigned JWT with parameter defaulting", function(){
+      var assertion = impl.generateUnsignedClientAssertion("testid", "testalias");
+      var expectedAssertion = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3RhbGlhcyJ9."
+      +"eyJzdWIiOiJ0ZXN0aWQiLCJpc3MiOiJ0ZXN0aWQiLCJhdWQiOlsiaHR0cHM6Ly9pZGVudGl0eS5vcmFjbGVj"
+      +"bG91ZC5jb20vIl0sImlhdCI6MTU5OTUzMDQwMCwiZXhwIjoxNTk5NTMwNDMwfQ";
+      expect(assertion).to.equal(expectedAssertion);
+    });
+    it("Generates an unsigned JWT with a custom expiry", function(){
+      var assertion = impl.generateUnsignedClientAssertion("testid", "testalias", 6);
+      var expectedAssertion = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3RhbGlhcyJ9."
+      +"eyJzdWIiOiJ0ZXN0aWQiLCJpc3MiOiJ0ZXN0aWQiLCJhdWQiOlsiaHR0cHM6Ly9pZGVudGl0eS5vcmFjbGVj"
+      +"bG91ZC5jb20vIl0sImlhdCI6MTU5OTUzMDQwMCwiZXhwIjoxNTk5NTMwNDA2fQ";
+      expect(assertion).to.equal(expectedAssertion);
+    });
+    it("Generates an unsigned JWT with a custom algorithm", function(){
+      var assertion = impl.generateUnsignedClientAssertion("testid", "testalias","ES384");
+      var expectedAssertion = "eyJhbGciOiJFUzM4NCIsInR5cCI6IkpXVCIsImtpZCI6InRlc3RhbGlhcyJ9."
+      +"eyJzdWIiOiJ0ZXN0aWQiLCJpc3MiOiJ0ZXN0aWQiLCJhdWQiOlsiaHR0cHM6Ly9pZGVudGl0eS5vcmFjbGVj"
+      +"bG91ZC5jb20vIl0sImlhdCI6MTU5OTUzMDQwMCwiZXhwIjoxNTk5NTMwNDMwfQ";
+      expect(assertion).to.equal(expectedAssertion);
     });
   });
 });
