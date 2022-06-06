@@ -2,6 +2,7 @@
 #Master config file for setting up the environment.
 
 export OBJ_STORE_URL="https://objectstorage.ap-sydney-1.oraclecloud.com/n/tenancy/b/bucket"
+export LOG_OCID="ocid1.log.oc1...."
 export OCI_REGION="ap-sydney-1"
 export IDCS_URL="https://idcs-host.identity.oraclecloud.com"
 export IDCS_SECRET_ID="ocid1.vaultsecret.oc1.aaaabbbbcccc"
