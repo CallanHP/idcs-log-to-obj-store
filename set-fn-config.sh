@@ -2,6 +2,7 @@
 . ./set-local-vars.sh
 
 fn config function $FN_APP_NAME ${PWD##*/} objStoreBucketURL $OBJ_STORE_URL
+fn config function $FN_APP_NAME ${PWD##*/} loggingOcid $LOG_OCID
 fn config function $FN_APP_NAME ${PWD##*/} ociRegion $OCI_REGION
 fn config function $FN_APP_NAME ${PWD##*/} idcsBaseUrl $IDCS_URL
 fn config function $FN_APP_NAME ${PWD##*/} idcsCertSecretId $IDCS_SECRET_ID

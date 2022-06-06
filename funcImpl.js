@@ -11,6 +11,8 @@ var logger = log4js.getLogger();
 logger.level = process.env["LOG_LEVEL"] || "error";
 
 const IDCS_MAX_COUNT = 1000;
+//Frequency when we need to guess the previous timestamp, in minutes
+const INVOKE_FREQUENCY = 10;
 
 /* Function implementation designed to handle pulling logs out of IDCS in a '
  * controlled manner and write them to an object storage bucket for archiving.
@@ -19,10 +21,14 @@ const IDCS_MAX_COUNT = 1000;
  * access to a lot of the backend APIs. It uses Secrets in Vault to store 
  * sensitive config information, and uses resource principals where possible.
  * 
+ * The function will push to object storage if a path to a bucket is provided,
+ * as well as OCI Logging, if a logging OCID is provided.
+ * 
  * The function is dynamically configured at runtime, and expects the following
  * in the function config:
  * 
  * objStoreBucketURL - full URL for the object store bucket inc. region, bucket, etc
+ * loggingOcid - OCID of the log group to push logs to
  * ociRegion - region code, e.g. ap-sydney-1
  * idcsBaseUrl - idcs identifier e.g. idcs-<host>.identity.oraclecloud.com
  * idcsCertSecretId - OCID of the secret which stores IDCS signing keys
@@ -35,6 +41,7 @@ var exportIDCSEvents = function (input, context) {
   return new Promise((resolve, reject) => {
     //Initialise our config from the function context
     const objUrl = context.config.objStoreBucketURL || process.env["OBJ_STORE_URL"];
+    const loggingOcid = context.config.loggingOcid || process.env["LOG_OCID"];
     const region = context.config.ociRegion || process.env["OCI_REGION"];
     const idcsUrl = context.config.idcsBaseUrl || process.env["IDCS_URL"];
     const idcsCertSecretId = context.config.idcsCertSecretId || process.env["IDCS_SECRET_ID"];
@@ -48,13 +55,15 @@ var exportIDCSEvents = function (input, context) {
       logger.level = context.config.logLevel;
     }
 
-    if (!objUrl || !region || !idcsUrl || !idcsCertSecretId || !idcsCertAlias || isNaN(maxEvents)) {
+    if (!(objUrl || loggingOcid) || !region || !idcsUrl || !idcsCertSecretId || !idcsCertAlias || !idcsClientId || isNaN(maxEvents)) {
       logger.error("Function lacking critical config information.");
       logger.error("objUrl:" + objUrl);
+      logger.error("loggingOcid:" + loggingOcid);
       logger.error("region:" + region);
       logger.error("idcsUrl:" + idcsUrl);
       logger.error("idcsCertSecretId:" + idcsCertSecretId);
       logger.error("idcsCertAlias:" + idcsCertAlias);
+      logger.error("idcsClientId:" + idcsClientId);
       logger.error("maxEvents:" + maxEvents);
       if (context.httpGateway) {
         context.httpGateway.statusCode = 500;
@@ -120,7 +129,13 @@ var exportIDCSEvents = function (input, context) {
         if (events.length != 0) {
           var lastEventTimestamp = events[events.length - 1].timestamp;
           logger.debug("Writing " + events.length + " to object store.");
-          return writeEvents(ociSigner, objUrl, timestamp, lastEventTimestamp, events);
+          //Grab the IDCS shortname for logging
+          var idcsId = idcsUrl.match(/idcs-[0-9a-f]{32}/);
+          if (idcsId == null || idcsId.length < 1) {
+            logger.error("Alternative IDCS URL is in use, defaulting IDCS Source name in logging");
+            idcsId = ["IDCS"]
+          }
+          return writeEvents(ociSigner, region, objUrl, loggingOcid, idcsId[0], timestamp, lastEventTimestamp, events);
         }
         return null;
       }).catch(err => {
@@ -131,7 +146,7 @@ var exportIDCSEvents = function (input, context) {
       logger.debug("Events written (or not, if 0), returning!");
       return resolve({
         "done": "yes!"
-      });      
+      });
     }).catch(err => {
       logger.error(err);
       if (context.httpGateway) {
@@ -154,8 +169,19 @@ var exportIDCSEvents = function (input, context) {
  */
 var getLastObjectTimestamp = function (signer, objUrl) {
   return new Promise((resolve, reject) => {
-    //First, lets get the list of objects for today!
     var now = new Date();
+    /* All of the logic below finds the last object written to objStore, 
+     * but it is possible to configure this to only use OCI Logging.
+     * If we are just using logging, we need to best guess...
+     * 
+     * TODO: It might be possible to pull the entries from the log group...
+     */
+    if(!objUrl){
+      now.setMinutes(now.getMinutes() - INVOKE_FREQUENCY);
+      return resolve(now)
+    }
+
+    //First, lets get the list of objects for today!
     getLastTimestampForDay(signer, objUrl, now).then(timestamp => {
       //If no results, get yesterday's results.
       if (!timestamp) {
@@ -198,7 +224,7 @@ var getLastTimestampForDay = function (signer, objUrl, date) {
     }).then(json => {
       //If there are results, then get the last one to determine our timestamp (results are sorted alphabetically)
       if (json.objects && json.objects.length != 0) {
-        while(json.objects.length > 0){
+        while (json.objects.length > 0) {
           var objName = json.objects.pop().name;
           //Since the name is <start timestamp>-<end timestamp>, we will match the latter using regex
           var objNameMatches = objName.match(/.*Z-(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z)/);
@@ -219,13 +245,72 @@ var getLastTimestampForDay = function (signer, objUrl, date) {
 }
 
 /*
- * Write back to object store...
+ * Write back to object store or logging.
  */
-var writeEvents = function (signer, objUrl, startTimestamp, endTimestamp, events) {
+var writeEvents = function (signer, region, objUrl, loggingOcid, idcsSourceName, startTimestamp, endTimestamp, events) {
   return new Promise((resolve, reject) => {
+    //Write all of the events in parallel
+    //Catching the errors to avoid fail-fast behaviour (we would prefer logs written somewhere)
+    var writeSteps = [];
+    if (objUrl) {
+      writeSteps.push(writeObjectStorageEvents(signer, objUrl, startTimestamp, endTimestamp, events).catch(err => { return err }));
+    }
+    if (loggingOcid) {
+      writeSteps.push(writeLoggingEvents(signer, region, loggingOcid, idcsSourceName, startTimestamp, events).catch(err => { return err }));
+    }
+    Promise.all(writeSteps).then(results => {
+      for (result of results) {
+        if (result instanceof Error) {
+          logger.error(result);
+        }
+      }
+    });
+  });
+}
+
+var writeLoggingEvents = function (signer, region, loggingOcid, idcsSourceName, startTimestamp, events) {
+  return new Promise((resolve, reject) => {
+    logger.debug("Writing events to Logging...");
+    //Need to do some transformation, since Logging expects a log line.
+    var logEventBody = {
+      "specversion": "1.0",
+      "logEntryBatches": [
+        {
+          "defaultlogentrytime": startTimestamp,
+          "entries": [],
+          "source": idcsSourceName,
+          "subject": "idcsAuditLogs",
+          "type": "auditLogs"
+        }
+      ]
+    };
+    //Parse the events into the body
+    for (idcsEvent of events) {
+      logEventBody.logEntryBatches[0].entries.push({
+        "id":idcsEvent.id,
+        "time":idcsEvent.timestamp,
+        "data":JSON.stringify(idcsEvent)
+      });
+    }
+    var request = {
+      url: "https://ingestion.logging." +region +".oci.oraclecloud.com/20200831/logs/" +loggingOcid +"/actions/push",
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(logEventBody)
+    }
+    request = signer.signRequest(request);
+    fetch(request.url, request).then(resolve).catch(reject);
+  });
+}
+
+var writeObjectStorageEvents = function (signer, objUrl, startTimestamp, endTimestamp, events) {
+  return new Promise((resolve, reject) => {
+    logger.debug("Writing events to Object Storage...");
     //Writing simple text to object store is actually really easy...
     var request = {
-      url: objUrl + "/o/" +startTimestamp + "-" + endTimestamp + "-idcs-audit-events.json",
+      url: objUrl + "/o/" + startTimestamp + "-" + endTimestamp + "-idcs-audit-events.json",
       method: "PUT",
       headers: {
         "content-type": "text/plain"
@@ -272,63 +357,44 @@ var getIDCSAuditEvents = function (idcsUrl, token, startTimestamp, maxEvents) {
   logger.debug("Get events - startTimestamp: " + startTimestamp);
   //TODO: Handle maxEvents > 1000, since that is the most that IDCS returns
   return new Promise((resolve, reject) => {
-    getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents<IDCS_MAX_COUNT?maxEvents:IDCS_MAX_COUNT, 1).then((data) => {
-      if(!data.totalResults || !data.Resources){
+    getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents < IDCS_MAX_COUNT ? maxEvents : IDCS_MAX_COUNT, 1).then((data) => {
+      if (!data.totalResults || !data.Resources) {
         throw new Error("Audit Events response from IDCS malformed.");
       }
       var events = data.Resources;
-      if(maxEvents>IDCS_MAX_COUNT && data.totalResults > IDCS_MAX_COUNT){
+      if (maxEvents > IDCS_MAX_COUNT && data.totalResults > IDCS_MAX_COUNT) {
         var requests = [];
         maxEvents -= IDCS_MAX_COUNT;
         //IDCS indexes start from 1... strange
-        var offset = IDCS_MAX_COUNT+1;
-        while(offset < data.totalResults && maxEvents > 0){
-          requests.push(getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents<IDCS_MAX_COUNT?maxEvents:IDCS_MAX_COUNT, offset));
+        var offset = IDCS_MAX_COUNT + 1;
+        while (offset < data.totalResults && maxEvents > 0) {
+          requests.push(getIDCSAuditEventsPaginated(idcsUrl, token, startTimestamp, maxEvents < IDCS_MAX_COUNT ? maxEvents : IDCS_MAX_COUNT, offset));
           maxEvents -= IDCS_MAX_COUNT;
           offset += IDCS_MAX_COUNT;
         }
-        Promise.all(requests).then((responses)=>{
-          for(var i=0; i<responses.length; i++){
-            if(responses[i].Resources){
+        Promise.all(requests).then((responses) => {
+          for (var i = 0; i < responses.length; i++) {
+            if (responses[i].Resources) {
               events = events.concat(responses[i].Resources);
-            }else{
+            } else {
               throw new Error("Audit Events response from IDCS malformed.");
             }
           }
           resolve(events);
-        }).catch((err)=>{throw err});
-      }else{
+        }).catch((err) => { throw err });
+      } else {
         resolve(events);
       }
     }).catch(reject);
-    // var request = {
-    //   url: (idcsUrl.startsWith("http") ? idcsUrl : "https://" + idcsUrl) + "/admin/v1/AuditEvents"
-    //     + "?filter=timestamp+gt+%22" + startTimestamp + "%22&count=" + maxEvents + "&sortBy=timestamp&sortOrder=ascending",
-    //   method: "GET",
-    //   headers: {
-    //     "Authorization": "Bearer " + token
-    //   }
-    // }
-    // fetch(request.url, request).then(res => {
-    //   return res.json();
-    // }).then(json => {
-    //   //strip out the surrounding meta
-    //   if (json.Resources) {
-    //     return resolve(json.Resources);
-    //   } else {
-    //     //logger.debug(json);
-    //     throw new Error("Audit Events response from IDCS malformed.");
-    //   }
-    // }).catch(reject);
   });
 }
 
-var getIDCSAuditEventsPaginated = function(idcsUrl, token, startTimestamp, maxEvents, offset){
-  return new Promise((resolve,reject)=> {
+var getIDCSAuditEventsPaginated = function (idcsUrl, token, startTimestamp, maxEvents, offset) {
+  return new Promise((resolve, reject) => {
     var request = {
       url: (idcsUrl.startsWith("http") ? idcsUrl : "https://" + idcsUrl) + "/admin/v1/AuditEvents"
-        + "?filter=timestamp+gt+%22" + startTimestamp + "%22&count=" + maxEvents + "&startIndex=" 
-        + offset +"&sortBy=timestamp&sortOrder=ascending",
+        + "?filter=timestamp+gt+%22" + startTimestamp + "%22&count=" + maxEvents + "&startIndex="
+        + offset + "&sortBy=timestamp&sortOrder=ascending",
       method: "GET",
       headers: {
         "Authorization": "Bearer " + token
@@ -337,7 +403,7 @@ var getIDCSAuditEventsPaginated = function(idcsUrl, token, startTimestamp, maxEv
     fetch(request.url, request).then(res => {
       return res.json();
     }).then(resolve).catch(reject);
-  });  
+  });
 }
 
 //Export for testing
