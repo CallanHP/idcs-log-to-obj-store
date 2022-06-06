@@ -2,6 +2,8 @@
 
 This little utility is designed to be called periodically in order to archive the IDCS Audit Events. It is written as a serverless function using the [fn framework](https://fnproject.io/) to run in [OCI](https://cloud.oracle.com/). 
 
+Update: Now supports writing to OCI Logging. It is recommended you use both OCI Logging and Object Storage, since this utility depends upon using the Object names to track last-run time (and do catchup after errors, missed invocations, etc.)
+
 Uses:
 
 * Public/Private Key authentication with IDCS
@@ -13,9 +15,10 @@ Required configuration:
 * Client in IDCS (with Audit Admin, and public key associated with it for Client Credentials)
 * Private key for the above stored in Secrets
 * (empty) Object Storage bucket created
+* (Optional) Custom Log and Log Group
 * Dynamic Group which includes the running function
-* Policies on the Dyanmic Group for read access to the Secret, list objects in bucket, and create object in bucket
-* Some sort of scheduler (I used health checks and API Gateway)
+* Policies on the Dyanmic Group for read access to the Secret, list objects in bucket, and create object in bucket, push logs, etc.
+* Some sort of scheduler (See [this blog](https://redthunder.blog/2022/05/03/a-better-mechanism-for-periodic-functions-invocation/) for information on approaches)
 
 For a more detailed write up, see the accompanying post on [Red Thunder](https://redthunder.blog/2020/10/02/simple-secure-log-retention-using-oci-services/)
 
